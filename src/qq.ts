@@ -6,9 +6,11 @@ export class QQFailure extends Error {
   constructor(public readonly status: number, public readonly code: string) { super(`QQ HTTP ${status} ${code}`); }
 }
 /** Constant-time comparison also handles unequal-length inputs without exceptions. */
+/** Compare equally sized credential digests without leaking a differing prefix. */
 export function secretEquals(a: string, b: string): boolean {
   return Boolean(a && b) && timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
 }
+/** Verify the untouched webhook bytes and reject replay timestamps outside the retention window. */
 export function verify(body: Buffer, headers: Headers, secret: string, now = Date.now()): boolean {
   const timestamp = headers.get('x-signature-timestamp') ?? '';
   const signature = headers.get('x-signature-ed25519') ?? '';
@@ -61,6 +63,7 @@ export function replyContent(input: Incoming, text: string): string {
   return input.scope !== 'private' && input.text.startsWith('/') ? '\n' + text.replace(/^\n+/, '') : text;
 }
 let cachedToken: { value: string; until: number } | undefined;
+/** Cache access tokens only until shortly before Tencent expiry; never persist credentials. */
 export async function qqToken(fetcher: typeof fetch = fetch): Promise<string> {
   if (cachedToken && cachedToken.until > Date.now()) return cachedToken.value;
   const response = await fetcher('https://bots.qq.com/app/getAppAccessToken', {

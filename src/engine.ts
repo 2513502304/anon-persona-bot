@@ -11,6 +11,7 @@ import { uploadQQImage, replyQQImage } from './qq.ts';
 import { compactIfNeeded, memoryTurns, summarize } from './memory.ts';
 
 const LEASE_MS = 240_000;
+/** Hash opaque platform identifiers and isolate read-only reference traffic from chat locks. */
 export function sessionKey(input: Incoming): string {
   const scope = input.scope === 'private' ? `${input.platform}:private:${input.user}` : `${input.platform}:${input.group}:${input.user}`;
   // Reference commands do not wait behind a model generation or load its growing history.
@@ -37,6 +38,7 @@ export class Engine {
     this.now = options.now ?? Date.now; this.accounts = new AccountsService(store, this.now);
   }
 
+  /** Authenticate the bound scope, deduplicate and persist before acknowledging an event. */
   async accept(input: Incoming): Promise<{ accepted: boolean; key?: string; busy?: boolean }> {
     if (Math.abs(this.now() - input.timestamp) > 240_000) return { accepted: false };
     let binding = (await this.store.read<Binding>('config/binding.json'))?.value;
@@ -63,6 +65,7 @@ export class Engine {
     });
   }
 
+  /** Fence every state transition against an expired or superseded worker. */
   private async underLease(key: string, token: string, fn: (state: Session) => void): Promise<Session> {
     return mutate(this.store, key, initialSession, state => {
       if (state.lease?.token !== token || state.lease.until <= this.now()) throw new Error('Lease lost');
@@ -169,6 +172,7 @@ export class Engine {
       });
     }
   }
+  /** Commit delivery outcome and optional settings while atomically releasing the lease. */
   private async finish(key: string, token: string, result: string, next?: Settings) {
     await this.underLease(key, token, state => {
       const job = state.jobs.shift();
@@ -179,6 +183,7 @@ export class Engine {
       delete state.lease;
     });
   }
+  /** Resume at most two abandoned jobs per sweep without replaying ambiguous paid calls. */
   async recover(): Promise<number> {
     const keys = await this.store.keys('sessions/');
     let processed = 0;

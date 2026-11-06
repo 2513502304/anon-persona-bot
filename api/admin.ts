@@ -5,6 +5,7 @@ import type { Session, Binding } from '../src/types.ts';
 import { GATEWAY_KEY, type GatewayState } from '../src/gateway-lease.ts';
 import { randomUUID } from 'node:crypto';
 
+/** Missing deployment credentials always deny operational access. */
 function authorized(request: Request) {
   return !!process.env.CRON_SECRET && secretEquals(request.headers.get('authorization') ?? '', `Bearer ${process.env.CRON_SECRET}`);
 }

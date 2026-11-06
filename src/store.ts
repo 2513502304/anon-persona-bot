@@ -16,6 +16,7 @@ export interface Store {
 
 /** Private origin reads plus ETag CAS; never use cached reads for state mutations. */
 export class BlobStore implements Store {
+  /** Read the private origin and its strong ETag as one versioned snapshot. */
   async read<T>(key: string): Promise<Snapshot<T> | null> {
     try {
       // Compressed responses carry weak ETags, which cannot guard Blob's conditional writes.
@@ -30,6 +31,7 @@ export class BlobStore implements Store {
       throw error;
     }
   }
+  /** Create once or compare-and-swap; conflicts return false and other errors propagate. */
   async write<T>(key: string, value: T, etag: string | null): Promise<boolean> {
     if (etag !== null && (!etag || etag.startsWith('W/'))) throw new Error('State write requires a strong ETag');
     try {
@@ -46,6 +48,7 @@ export class BlobStore implements Store {
       throw error;
     }
   }
+  /** Follow every page so recovery cannot silently omit older sessions. */
   async keys(prefix: string): Promise<string[]> {
     const result: string[] = [];
     let cursor: string | undefined;
@@ -79,9 +82,11 @@ export async function mutate<T, R>(store: Store, key: string, initial: () => T,
 /** Test backend preserves CAS semantics, including separate read/write interleavings. */
 export class MemoryStore implements Store {
   private values = new Map<string, Snapshot<unknown>>();
+  /** Read the private origin and its strong ETag as one versioned snapshot. */
   async read<T>(key: string): Promise<Snapshot<T> | null> {
     return structuredClone(this.values.get(key) as Snapshot<T> | undefined) ?? null;
   }
+  /** Create once or compare-and-swap; conflicts return false and other errors propagate. */
   async write<T>(key: string, value: T, etag: string | null): Promise<boolean> {
     if ((this.values.get(key)?.etag ?? null) !== etag) return false;
     this.values.set(key, { value: structuredClone(value), etag: randomUUID() });

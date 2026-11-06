@@ -4,6 +4,7 @@ import { contextEstimate, memoryTurns, CONTEXT_BUDGET } from './memory.ts';
 import { personaPrompt } from './personas.ts';
 import type { Settings } from './types.ts';
 
+/** New conversations get independent settings and empty per-persona history. */
 export function initialSettings(): Settings { return { model: { ...DEFAULT_MODEL }, persona: 'anon', history: {} }; }
 /** Only read-only reference commands may bypass conversation/account loading. */
 export function isReferenceCommand(text: string): boolean {

@@ -25,14 +25,17 @@ const empty = (): Accounts => ({ identities: {}, profiles: {} });
 function fresh(now: number): Profile {
   return { member: false, owner: false, role: 'member', roleAt: 0, day: dayAt(now), used: 0, reservations: {} };
 }
+/** Quotas follow the Beijing calendar, independently of the runtime timezone. */
 function resetDay(p: Profile, now: number) {
   if (p.day !== dayAt(now)) { p.day = dayAt(now); p.used = 0; p.reservations = {}; }
 }
+/** Apply expiring administrator status without downgrading the bound owner. */
 function usage(id: string, p: Profile, now: number): Usage {
   resetDay(p, now);
   const role = p.owner ? '群主' : p.role === 'admin' && now - p.roleAt < 86400_000 ? '管理员' : '普通成员';
   return { account: id.slice(0, 12), role, limit: p.owner ? null : p.limit ?? (role === '管理员' ? 100 : 10), used: p.used, member: p.member };
 }
+/** Merge identity aliases inside one CAS transaction, retaining usage and grants. */
 function merge(a: Accounts, from: string, into: string, now: number) {
   if (from === into) return;
   const src = a.profiles[from]!; const dst = a.profiles[into]!;
@@ -46,6 +49,7 @@ function merge(a: Accounts, from: string, into: string, now: number) {
   for (const [key, value] of Object.entries(a.identities)) if (value === from) a.identities[key] = into;
   delete a.profiles[from];
 }
+/** Trust platform IDs only; migrate legacy namespaces without user-supplied binding codes. */
 function resolve(a: Accounts, input: Incoming, binding: Binding, now: number): string {
   // One application's authenticated QQ user OpenID is the personal identity.
   // Migrate both old scene namespaces atomically, preserving used quota and owner grants.
@@ -82,6 +86,7 @@ function resolve(a: Accounts, input: Incoming, binding: Binding, now: number): s
 /** One CAS document makes identity migration, owner-only grants and shared quota reservations atomic. */
 export class AccountsService {
   constructor(private store: Store, private now: () => number = Date.now) {}
+  /** Refresh authenticated membership and return quota; unchanged reads do not write. */
   async inspect(input: Incoming, binding: Binding): Promise<Usage> {
     const now = this.now();
     return mutate(this.store, KEY, empty, a => {
@@ -91,6 +96,7 @@ export class AccountsService {
       return { value: a, result, unchanged: before === JSON.stringify(a) };
     });
   }
+  /** Reserve one paid interaction atomically; duplicate event reservations are idempotent. */
   async reserve(input: Incoming, binding: Binding): Promise<boolean> {
     const now = this.now();
     return mutate(this.store, KEY, empty, a => {
@@ -109,6 +115,7 @@ export class AccountsService {
       return { value: a, result: true };
     });
   }
+  /** Parse owner-only grants outside the model and require a native mention target. */
   async command(input: Incoming, binding: Binding): Promise<string | null> {
     const [name, ...args] = input.text.trim().split(/\s+/);
     if (!['/usage', '/usage-limit'].includes(name!)) return null;

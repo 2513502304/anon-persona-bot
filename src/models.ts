@@ -7,11 +7,13 @@ export const MODELS = {
 } as const;
 export type ModelKey = keyof typeof MODELS;
 export const DEFAULT_MODEL: Selection = { key: 'openai:gpt-6.1-sol', effort: 'high' };
+/** Reject stale or unsupported selections before constructing a provider request. */
 export function modelFor(selection: Selection) {
   const model = MODELS[selection.key as ModelKey];
   if (!model || !(model.efforts as readonly string[]).includes(selection.effort)) throw new Error('Unsupported model/effort');
   return model;
 }
+/** Resolve only documented aliases; never silently fall back from an invalid effort. */
 export function selectModel(key: string, effort?: string): Selection | null {
   const aliases: Record<string, ModelKey> = { openai: 'openai:gpt-6.1-sol', deepseek: 'deepseek:deepseek-flash',
     'deepseek:deepseek-v4.1-flash': 'deepseek:deepseek-flash' };
@@ -20,6 +22,7 @@ export function selectModel(key: string, effort?: string): Selection | null {
   if (!model || !(model.efforts as readonly string[]).includes(effort ?? model.defaultEffort)) return null;
   return { key: resolved, effort: effort ?? model.defaultEffort };
 }
+/** Expose the provider ID and effort so routing remains visible to the caller. */
 export function modelDescription(selection: Selection) {
   const model = modelFor(selection);
   return `${model.name}\nAPI：${selection.key}\n推理强度：${selection.effort}`;

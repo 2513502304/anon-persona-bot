@@ -48,4 +48,5 @@ export async function POST(request: Request): Promise<Response> {
     return new Response(null, { status: 503 }); // No acknowledgment until the inbox is durable.
   }
 }
+/** Public discovery endpoint exposes no binding or account information. */
 export function GET() { return Response.json({ service: 'anon-persona-bot', transport: 'QQ webhook' }); }

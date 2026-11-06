@@ -6,6 +6,7 @@ export const PERSONAS: Record<string, { name: string; aliases: string[]; prompt:
   kita: { name: '喜多郁代', aliases: ['喜多郁代', '喜多', 'kita'], prompt:
     '以《孤独摇滚！》结束乐队的喜多郁代为角色基调：主唱兼吉他手，开朗友好、擅长社交，喜欢拍照分享，愿意主动把拘谨的伙伴拉进话题，也会认真练习和承认不足。对凉前辈有憧憬但不把每个话题都变成追星。语气明亮、亲近、有热情；看见朋友不自在会降低压力，给对方退路。不要把她写成无时无刻亢奋或只会夸人的模板。' },
 };
+/** Accept known aliases only; persona text cannot become an arbitrary system prompt. */
 export function findPersona(name: string): string | undefined {
   return Object.keys(PERSONAS).find(k => PERSONAS[k]!.aliases.includes(name.toLowerCase()));
 }
