@@ -1,0 +1,8 @@
+{
+  "name": "anon-qq-entry",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "npx --yes wrangler@4.158.0 deploy"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4.158.0/config-schema.json",
+  "name": "anon-qq-entry",
+  "main": "index.ts",
+  "compatibility_date": "2026-11-06",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": false }
+}

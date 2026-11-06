@@ -1,0 +1,39 @@
+{
+  "name": "anon-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "tsx --test test/*.test.ts",
+    "check": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "build:daemon": "esbuild daemon/main.ts --bundle --platform=node --target=node24 --format=esm --packages=external --outfile=dist/gateway.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "type": "module",
+  "dependencies": {
+    "@chat-adapter/state-memory": "^4.44.0",
+    "@tencent-connect/qqbot-nodejs": "^1.0.5",
+    "@vercel/blob": "^2.8.2",
+    "@vercel/functions": "^3.11.0",
+    "@vercel/oidc": "^4.0.7",
+    "chat": "^4.44.0",
+    "js-tiktoken": "^1.0.21"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "undici": "^7.30.2"
+  },
+  "overrides": {
+    "zod": "^4.6.6"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "private": true
+}
