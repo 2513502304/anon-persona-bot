@@ -5,10 +5,12 @@ import { generate, ProviderFailure } from './models.ts';
 import { personaPrompt } from './personas.ts';
 import { secretEquals, QQFailure } from './qq.ts';
 import type { Binding, Incoming, Job, Session, Settings } from './types.ts';
+import { AccountsService } from './accounts.ts';
 
 const LEASE_MS = 240_000;
 export function sessionKey(input: Incoming): string {
-  return `sessions/${createHash('sha256').update(`${input.platform}:${input.group}:${input.user}`).digest('hex')}.json`;
+  const scope = input.scope === 'private' ? `${input.platform}:private:${input.user}` : `${input.platform}:${input.group}:${input.user}`;
+  return `sessions/${createHash('sha256').update(scope).digest('hex')}.json`;
 }
 function initialSession(): Session { return { settings: initialSettings(), jobs: [], completed: [], updatedAt: Date.now() }; }
 export interface EngineOptions {
@@ -17,18 +19,20 @@ export interface EngineOptions {
   generate?: typeof generate;
   deliver: (input: Incoming, text: string) => Promise<string>;
   now?: () => number;
-  dailyLimit?: number;
 }
 
 /** Durable inbox owns correctness; SDK-local routing state is never used as persistence. */
 export class Engine {
   private now: () => number;
-  constructor(public readonly store: Store, private readonly options: EngineOptions) { this.now = options.now ?? Date.now; }
+  private accounts: AccountsService;
+  constructor(public readonly store: Store, private readonly options: EngineOptions) {
+    this.now = options.now ?? Date.now; this.accounts = new AccountsService(store, this.now);
+  }
 
   async accept(input: Incoming): Promise<{ accepted: boolean; key?: string; busy?: boolean }> {
     if (Math.abs(this.now() - input.timestamp) > 240_000) return { accepted: false };
     let binding = (await this.store.read<Binding>('config/binding.json'))?.value;
-    if (input.text.startsWith('/bind ')) {
+    if (input.scope !== 'private' && input.text.startsWith('/bind ')) {
       if (!secretEquals(input.text.slice(6).trim(), this.options.pairingCode)) return { accepted: false };
       if (!binding) {
         await this.store.write<Binding>('config/binding.json', { group: input.group, owner: input.user, pairedAt: this.now() }, null);
@@ -37,7 +41,8 @@ export class Engine {
       if (binding?.group !== input.group || binding.owner !== input.user) return { accepted: false };
       input = { ...input, text: '/help' }; // Do not persist the pairing credential in chat history.
     }
-    if (!binding || binding.group !== input.group) return { accepted: false };
+    if (!binding || (input.scope !== 'private' && binding.group !== input.group)) return { accepted: false };
+    await this.accounts.inspect(input, binding);
     const key = sessionKey(input);
     return mutate<Session, { accepted: boolean; key?: string; busy?: boolean }>(this.store, key, initialSession, state => {
       if (state.completed.includes(input.id) || state.jobs.some(j => j.input.id === input.id)) return { value: state, result: { accepted: true, key }, unchanged: true };
@@ -55,15 +60,6 @@ export class Engine {
       return { value: state, result: state };
     });
   }
-  private async reserveDailyCall(): Promise<boolean> {
-    // UTC+8 calendar boundary; a reserved call counts even if a provider times out.
-    const day = new Date(this.now() + 8 * 3600_000).toISOString().slice(0,10);
-    return mutate(this.store, `quota/${day}.json`, () => ({ calls: 0 }), quota => {
-      if (quota.calls >= (this.options.dailyLimit ?? 100)) return { value: quota, result: false, unchanged: true };
-      quota.calls++; return { value: quota, result: true };
-    });
-  }
-
   /** At most one job per run; daemon recovery picks up queued work after a restart. */
   async run(key: string): Promise<void> {
     const token = randomUUID();
@@ -89,13 +85,22 @@ export class Engine {
           s.jobs[0]!.result = '生成中断，未自动重试';
         });
       } else if (job.stage === 'pending') {
-        const parsed = command(job.input.text, state.settings, state.lastResult);
+        const binding = (await this.store.read<Binding>('config/binding.json'))?.value;
+        if (!binding) throw new Error('Missing group binding');
+        const accountReply = await this.accounts.command(job.input, binding);
+        const parsed = accountReply !== null ? { reply: accountReply, next: state.settings }
+          : command(job.input.text, state.settings, state.lastResult, job.input.scope === 'private');
         let reply: string;
         let next: Settings | undefined;
         let result = '命令已处理';
         if (parsed) { reply = parsed.reply; next = parsed.next; }
         else if (!this.options.enabled) { reply = '机器人正在完成部署验收，暂未启用模型调用。/help 和 /ping 可用。'; }
-        else if (!(await this.reserveDailyCall())) { reply = '今天的模型调用上限已到，暂不继续调用。没有切换到其他模型。'; }
+        else if (!(await this.accounts.reserve(job.input, binding))) {
+          const usage = await this.accounts.inspect(job.input, binding);
+          reply = usage.member ? `今日个人额度已用完（${usage.used}/${usage.limit}）。北京时间 00:00 重置；群聊和私聊共享额度。\n/usage 查看详情，或请群主调整额度。`
+            : '请先关联你在 ANON 群中的身份，再开始私聊。发送 /link 查看绑定步骤。群聊与私聊共用每日额度。';
+          result = usage.member ? '个人额度不足，未调用模型' : '私聊未关联，未调用模型';
+        }
         else {
           await this.underLease(key, token, s => { s.jobs[0]!.stage = 'generating'; });
           try {

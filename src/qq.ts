@@ -27,20 +27,29 @@ export function challenge(data: unknown, secret: string): object | null {
 export function parseEvent(payload: unknown): Incoming | null {
   if (!payload || typeof payload !== 'object') return null;
   const p = payload as Record<string, any>;
-  if (p.op !== 0 || p.t !== 'GROUP_AT_MESSAGE_CREATE') return null;
+  if (p.op !== 0 || !['GROUP_AT_MESSAGE_CREATE', 'C2C_MESSAGE_CREATE'].includes(p.t)) return null;
   const d = p.d;
-  if (!d || typeof d.id !== 'string' || typeof d.group_openid !== 'string' || typeof d.author?.member_openid !== 'string' || typeof d.content !== 'string') return null;
-  if ([d.id,d.group_openid,d.author.member_openid].some(x => !/^[^\s\x00-\x1f]{1,256}$/.test(x))) return null;
+  const privateChat = p.t === 'C2C_MESSAGE_CREATE';
+  const user = privateChat ? d?.author?.user_openid : d?.author?.member_openid;
+  const group = privateChat ? 'private' : d?.group_openid;
+  const valid = (x: unknown): x is string => typeof x === 'string' && /^[a-zA-Z0-9_.=+/-]{1,256}$/.test(x);
+  if (!d || !valid(d.id) || !valid(group) || !valid(user) || typeof d.content !== 'string' || d.author?.bot === true) return null;
   const timestamp = Date.parse(d.timestamp);
   if (!Number.isFinite(timestamp)) return null;
   // Only remove a leading bot mention. Preserve user message contents otherwise.
   const text = d.content.replace(/^\s*<@!?[^>]+>\s*/, '').trim();
   if (!text || text.length > 2000) return null;
-  return { id: d.id, platform: 'qq', group: d.group_openid, user: d.author.member_openid, text, timestamp };
+  const mentions = !privateChat && Array.isArray(d.mentions) ? d.mentions.filter((m: any) => !m.bot && !m.is_you && m.scope !== 'all')
+    .map((m: any) => ({ id: m.member_openid ?? m.id, name: typeof m.username === 'string' ? m.username : typeof m.nickname === 'string' ? m.nickname : undefined,
+      union: valid(m.union_openid) ? m.union_openid : undefined })).filter((m: any) => valid(m.id)) : [];
+  return { id: d.id, platform: 'qq', group, user, text, timestamp, scope: privateChat ? 'private' : 'group',
+    role: !privateChat && ['member','admin','owner'].includes(d.author.member_role) ? d.author.member_role : undefined,
+    union: valid(d.author.union_openid) ? d.author.union_openid : undefined, mentions };
 }
-/** QQ adds the passive-reply mention; separate structured command output from it. */
+
+/** QQ adds the passive-reply mention itself; a leading newline separates structured command output. */
 export function replyContent(input: Incoming, text: string): string {
-  return input.text.startsWith('/') ? '\n' + text.replace(/^\n+/, '') : text;
+  return input.scope !== 'private' && input.text.startsWith('/') ? '\n' + text.replace(/^\n+/, '') : text;
 }
 let cachedToken: { value: string; until: number } | undefined;
 export async function qqToken(fetcher: typeof fetch = fetch): Promise<string> {
@@ -60,7 +69,7 @@ export async function replyQQ(input: Incoming, text: string): Promise<string> {
   const token = await qqToken();
   let response: Response;
   try {
-    response = await fetch(`https://api.sgroup.qq.com/v2/groups/${encodeURIComponent(input.group)}/messages`, {
+    response = await fetch(`https://api.sgroup.qq.com/v2/${input.scope === 'private' ? 'users' : 'groups'}/${encodeURIComponent(input.scope === 'private' ? input.user : input.group)}/messages`, {
       method: 'POST', headers: { Authorization: `QQBot ${token}`, 'Content-Type': 'application/json', 'X-Union-Appid': process.env.QQ_APP_ID_ANON! },
       body: JSON.stringify({ content: replyContent(input, text), msg_type: 0, msg_id: input.id, msg_seq: 1 }),
       signal: AbortSignal.timeout(15_000),
