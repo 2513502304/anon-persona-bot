@@ -2,6 +2,13 @@ import { waitUntil } from '@vercel/functions';
 import { verify, challenge, parseEvent } from '../src/qq.ts';
 import { runtime } from '../src/runtime.ts';
 
+let challenges = { since: 0, count: 0 };
+/** Best-effort per-instance flood guard; signature-domain separation is the security boundary. */
+function allowChallenge(now = Date.now()): boolean {
+  if (now - challenges.since >= 60_000) challenges = { since: now, count: 0 };
+  return ++challenges.count <= 30;
+}
+
 /** Reject unsigned events before touching storage or invoking any model. */
 export async function POST(request: Request): Promise<Response> {
   if (Number(request.headers.get('content-length') ?? 0) > 65536) return new Response(null, { status: 413 });
@@ -23,6 +30,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!payload || typeof payload !== 'object') return new Response(null, { status: 400 });
   const secret = process.env.QQ_APP_SECRET_ANON ?? '';
   if (payload.op === 13) {
+    if (!allowChallenge()) return new Response(null, { status: 429 });
     const result = challenge(payload.d, secret);
     return result ? Response.json(result) : new Response(null, { status: 400 });
   }

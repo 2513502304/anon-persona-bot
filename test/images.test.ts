@@ -74,3 +74,10 @@ test('an interrupted image generation is never automatically charged a second ti
   await store.write(sessionKey(input), snapshot.value, snapshot.etag);
   await engine.recover(); assert.equal(generated, 0);
 });
+
+test('image provider preserves HTTP status without leaking malformed upstream content', async () => {
+  const old = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = 'test-only';
+  try {
+    await assert.rejects(generateImage(imageCommand('/image cat')!.request!, async () => new Response('private HTML error', { status: 503 })), /openai-image HTTP 503 invalid_response_body/);
+  } finally { if (old === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = old; }
+});

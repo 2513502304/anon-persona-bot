@@ -57,7 +57,11 @@ export async function generateImage(request: ImageRequest, fetcher: typeof fetch
       signal: AbortSignal.timeout(160_000),
     });
   } catch { throw new ProviderFailure('openai-image', 0, 'network_or_timeout'); }
-  const data = await response.json() as { data?: { b64_json?: string }[]; error?: { code?: string } };
+  let data: { data?: { b64_json?: string }[]; error?: { code?: string } };
+  try {
+    data = await response.json() as typeof data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid shape');
+  } catch { throw new ProviderFailure('openai-image', response.status, 'invalid_response_body'); }
   if (!response.ok) throw new ProviderFailure('openai-image', response.status,
     String(data.error?.code ?? 'provider_error').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 60));
   const encoded = data.data?.[0]?.b64_json;

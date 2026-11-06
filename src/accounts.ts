@@ -85,19 +85,23 @@ export class AccountsService {
   async inspect(input: Incoming, binding: Binding): Promise<Usage> {
     const now = this.now();
     return mutate(this.store, KEY, empty, a => {
+      const before = JSON.stringify(a);
       const id = resolve(a, input, binding, now);
-      return { value: a, result: usage(id, a.profiles[id]!, now) };
+      const result = usage(id, a.profiles[id]!, now);
+      return { value: a, result, unchanged: before === JSON.stringify(a) };
     });
   }
   async reserve(input: Incoming, binding: Binding): Promise<boolean> {
     const now = this.now();
     return mutate(this.store, KEY, empty, a => {
+      const before = JSON.stringify(a);
       const id = resolve(a, input, binding, now); const p = a.profiles[id]!;
       const u = usage(id, p, now);
-      if (!p.member) return { value: a, result: false };
+      const unchanged = () => before === JSON.stringify(a);
+      if (!p.member) return { value: a, result: false, unchanged: unchanged() };
       const request = hash(`${input.scope ?? 'group'}:${input.group}:${input.id}`);
-      if (p.reservations[request]) return { value: a, result: true, unchanged: true };
-      if (u.limit !== null && p.used >= u.limit) return { value: a, result: false };
+      if (p.reservations[request]) return { value: a, result: true, unchanged: unchanged() };
+      if (u.limit !== null && p.used >= u.limit) return { value: a, result: false, unchanged: unchanged() };
       p.used++;
       // Event replay protection lasts longer than the accepted inbound-message window.
       p.reservations = Object.fromEntries(Object.entries(p.reservations).filter(([, at]) => now - at < 600_000));

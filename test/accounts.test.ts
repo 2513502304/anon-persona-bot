@@ -108,3 +108,17 @@ test('private ingress accepts opaque Tencent message IDs and standard author ID 
   assert.equal(parseEvent(payload)?.text, '/usage');
   assert.equal(parseEvent({ ...payload, d: { ...payload.d, id: 'bad\nmessage' } }), null);
 });
+
+test('unchanged account inspection and denied reservations avoid extra CAS writes', async () => {
+  class CountingStore extends MemoryStore {
+    writes = 0;
+    override async write<T>(key: string, value: T, etag: string | null) { this.writes++; return super.write(key, value, etag); }
+  }
+  const store = new CountingStore(); const now = Date.now();
+  const service = new AccountsService(store, () => now);
+  const binding = { group: 'g', owner: 'owner', pairedAt: now };
+  const privateUser: Incoming = { platform: 'qq', scope: 'private', group: 'private', user: 'unknown', text: '/usage', id: 'u', timestamp: now };
+  await service.inspect(privateUser, binding); const initialWrites = store.writes;
+  await service.inspect(privateUser, binding); assert.equal(await service.reserve(privateUser, binding), false);
+  assert.equal(store.writes, initialWrites);
+});

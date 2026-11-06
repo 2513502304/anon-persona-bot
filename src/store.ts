@@ -1,4 +1,4 @@
-import { get, put, list, BlobNotFoundError, BlobPreconditionFailedError } from '@vercel/blob';
+import { get, put, list, del, BlobNotFoundError, BlobPreconditionFailedError } from '@vercel/blob';
 import { randomUUID } from 'node:crypto';
 import { getVercelOidcToken } from '@vercel/oidc';
 
@@ -53,8 +53,13 @@ export class BlobStore implements Store {
       const page = await list({ prefix, limit: 100, cursor, ...await daemonAuth() });
       result.push(...page.blobs.map(b => b.pathname));
       cursor = page.hasMore ? page.cursor : undefined;
-    } while (cursor && result.length < 500);
+    } while (cursor);
     return result;
+  }
+  /** Only disposable diagnostic objects may be removed through this operational helper. */
+  async deleteDiagnostic(key: string): Promise<void> {
+    if (!/^diagnostics\/(?:cas|large)-[a-f\d-]+\.json$/.test(key)) throw new Error('Not a diagnostic key');
+    await del(key, { ...await daemonAuth() });
   }
 }
 

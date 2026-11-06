@@ -123,3 +123,21 @@ test('provider failure has no fallback request and never exposes secret/body', a
     assert.equal(calls, 1);
   } finally { if (old === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = old; }
 });
+
+test('challenge cannot be used as a signing oracle for forged QQ event objects', async () => {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const event = JSON.stringify({ op: 0, t: 'GROUP_AT_MESSAGE_CREATE', d: { id: 'fake', group_openid: 'g', author: { member_openid: 'owner' }, timestamp: new Date().toISOString(), content: 'hi' } });
+  assert.ok(event.length < 256);
+  for (const prefix of ['', ' ', '\n\r\t']) assert.equal(challenge({ plain_token: prefix + event, event_ts: timestamp }, secret), null);
+  assert.equal(challenge({ plain_token: '', event_ts: timestamp }, secret), null);
+  // The legitimate public reference vector remains covered above.
+});
+
+test('text provider preserves HTTP status for non-JSON and null response bodies', async () => {
+  const old = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = 'test-only';
+  try {
+    for (const body of ['<html>upstream failure</html>', 'null']) {
+      await assert.rejects(generate({ key: 'openai:gpt-6.1-sol', effort: 'high' }, '', [], async () => new Response(body, { status: 502 })), /HTTP 502 invalid_response_body/);
+    }
+  } finally { if (old === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = old; }
+});

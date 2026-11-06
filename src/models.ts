@@ -53,7 +53,11 @@ export async function generate(selection: Selection, prompt: string, turns: Turn
       body: JSON.stringify(body), signal: AbortSignal.timeout(options.timeoutMs ?? 85_000),
     });
   } catch { throw new ProviderFailure(model.provider, 0, 'network_or_timeout'); }
-  const data = await response.json() as Record<string, any>;
+  let data: Record<string, any>;
+  try {
+    data = await response.json() as Record<string, any>;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid shape');
+  } catch { throw new ProviderFailure(model.provider, response.status, 'invalid_response_body'); }
   if (!response.ok) throw new ProviderFailure(model.provider, response.status,
     String(data.error?.code ?? 'provider_error').replace(/[^a-zA-Z0-9_-]/g, '').slice(0,60));
   let output: string;

@@ -17,10 +17,14 @@ export function verify(body: Buffer, headers: Headers, secret: string, now = Dat
   if (Math.abs(now - Number(timestamp) * 1000) > 10 * 60_000) return false;
   return verifyWebhookSignature({ body, timestamp, signature, botSecret: secret });
 }
+/** Challenge text must never be an event JSON object: both protocols share a signing key. */
 export function challenge(data: unknown, secret: string): object | null {
   if (!secret || !data || typeof data !== 'object') return null;
   const d = data as Record<string, unknown>;
   if (typeof d.plain_token !== 'string' || typeof d.event_ts !== 'string' || d.plain_token.length > 256 || !/^\d{10}$/.test(d.event_ts)) return null;
+  // Every JSON object accepted by JSON.parse starts with '{' after JSON whitespace.
+  // Restrict the dangerous message domain without guessing Tencent's random-token alphabet.
+  if (!d.plain_token.length || /^\s*\{/.test(d.plain_token)) return null;
   return signValidationResponse({ plainToken: d.plain_token, eventTs: d.event_ts, botSecret: secret });
 }
 /** QQ group_openid differs from the visible group number; it comes from a signed event. */

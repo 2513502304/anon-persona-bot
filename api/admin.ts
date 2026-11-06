@@ -3,6 +3,7 @@ import { BlobStore, mutate } from '../src/store.ts';
 import { generate, DEFAULT_MODEL, ProviderFailure } from '../src/models.ts';
 import type { Session, Binding } from '../src/types.ts';
 import { GATEWAY_KEY, type GatewayState } from '../src/gateway-lease.ts';
+import { randomUUID } from 'node:crypto';
 
 function authorized(request: Request) {
   return !!process.env.CRON_SECRET && secretEquals(request.headers.get('authorization') ?? '', `Bearer ${process.env.CRON_SECRET}`);
@@ -14,13 +15,18 @@ export async function GET(request: Request) {
   const binding = (await store.read<Binding>('config/binding.json'))?.value;
   const gateway = (await store.read<GatewayState>(GATEWAY_KEY))?.value;
   const keys = await store.keys('sessions/');
-  const sessions = await Promise.all(keys.map(async key => {
+  const readSummary = async (key: string) => {
     const snapshot = await store.read<Session>(key);
     const s = snapshot?.value;
     return { pending: s?.jobs.length ?? 0, stages: s?.jobs.map(j => j.stage),
       weakEtag: snapshot?.etag.startsWith('W/'),
       leaseUntil: s?.lease?.until, lastResult: s?.lastResult, updatedAt: s?.updatedAt };
-  }));
+  };
+  const sessions: Awaited<ReturnType<typeof readSummary>>[] = [];
+  // Bound private-origin reads even when a deployment has hundreds of retained sessions.
+  for (let start = 0; start < keys.length; start += 8) {
+    sessions.push(...await Promise.all(keys.slice(start, start + 8).map(readSummary)));
+  }
   return Response.json({ enabled: process.env.BOT_ENABLED === 'true', bound: !!binding,
     gateway: gateway ? { connected: gateway.connected && gateway.until > Date.now(), readyAt: gateway.readyAt,
       updatedAt: gateway.updatedAt, leaseActive: gateway.until > Date.now() } : null,
@@ -44,21 +50,28 @@ export async function POST(request: Request) {
   }
   if (action === 'blob') {
     const store = new BlobStore();
-    const key = `diagnostics/cas-${Date.now()}.json`;
-    await Promise.all(Array.from({ length: 4 }, () => mutate(store, key, () => ({ count: 0 }), value => {
-      value.count++; return { value, result: undefined };
-    })));
-    const count = (await store.read<{ count: number }>(key))?.value.count;
-    return Response.json({ cas: count === 4, count });
+    const key = `diagnostics/cas-${randomUUID()}.json`;
+    try {
+      // Settle every writer before cleanup, including when one probe fails.
+      const writes = await Promise.allSettled(Array.from({ length: 4 }, () => mutate(store, key, () => ({ count: 0 }), value => {
+        value.count++; return { value, result: undefined };
+      })));
+      const failed = writes.find(r => r.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+      const count = (await store.read<{ count: number }>(key))?.value.count;
+      return Response.json({ cas: count === 4, count });
+    } finally { await store.deleteDiagnostic(key); }
   }
   if (action === 'blob-large') {
     const store = new BlobStore();
-    const key = `diagnostics/large-${Date.now()}.json`;
+    const key = `diagnostics/large-${randomUUID()}.json`;
+    try {
     await store.write(key, { content: 'storage-probe-'.repeat(1000), count: 0 }, null);
     const snapshot = (await store.read<{ content: string; count: number }>(key))!;
     const weakEtag = snapshot.etag.startsWith('W/');
     const updated = await store.write(key, { ...snapshot.value, count: 1 }, snapshot.etag);
     return Response.json({ weakEtag, updated });
+    } finally { await store.deleteDiagnostic(key); }
   }
   if (action === 'openai' || action === 'deepseek') {
     try {
