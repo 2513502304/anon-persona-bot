@@ -1,0 +1,8 @@
+#!/bin/sh
+# All remote main updates must be performed by GitHub's reviewed PR merge path.
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = refs/heads/main ]; then
+    echo 'Direct pushes to main are prohibited. Merge an approved PR with a merge commit.' >&2
+    exit 1
+  fi
+done
