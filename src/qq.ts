@@ -30,9 +30,14 @@ export function parseEvent(payload: unknown): Incoming | null {
   if (p.op !== 0 || !['GROUP_AT_MESSAGE_CREATE', 'C2C_MESSAGE_CREATE'].includes(p.t)) return null;
   const d = p.d;
   const privateChat = p.t === 'C2C_MESSAGE_CREATE';
-  const user = privateChat ? d?.author?.user_openid : d?.author?.member_openid;
+  const user = (privateChat ? d?.author?.user_openid : d?.author?.member_openid) || d?.author?.id;
   const group = privateChat ? 'private' : d?.group_openid;
-  const valid = (x: unknown): x is string => typeof x === 'string' && /^[a-zA-Z0-9_.=+/-]{1,256}$/.test(x);
+  // Tencent identifiers are opaque, not usernames or fixed-format base64 strings.
+  // Hash them for local keys and encode them at URL boundaries; don't reject valid punctuation.
+  const valid = (x: unknown): x is string => {
+    if (typeof x !== 'string' || !x.length || x.length > 2048 || /[\u0000-\u0020\u007f]/.test(x)) return false;
+    try { encodeURIComponent(x); return true; } catch { return false; }
+  };
   if (!d || !valid(d.id) || !valid(group) || !valid(user) || typeof d.content !== 'string' || d.author?.bot === true) return null;
   const timestamp = Date.parse(d.timestamp);
   if (!Number.isFinite(timestamp)) return null;
