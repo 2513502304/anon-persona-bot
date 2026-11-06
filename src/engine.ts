@@ -8,6 +8,7 @@ import type { Binding, Incoming, Job, Session, Settings } from './types.ts';
 import { AccountsService } from './accounts.ts';
 import { imageCommand, generateImage } from './images.ts';
 import { uploadQQImage, replyQQImage } from './qq.ts';
+import { compactIfNeeded, memoryTurns, summarize } from './memory.ts';
 
 const LEASE_MS = 240_000;
 export function sessionKey(input: Incoming): string {
@@ -24,6 +25,7 @@ export interface EngineOptions {
   generateImage?: typeof generateImage;
   uploadImage?: typeof uploadQQImage;
   deliverImage?: typeof replyQQImage;
+  summarize?: typeof summarize;
 }
 
 /** Durable inbox owns correctness; SDK-local routing state is never used as persistence. */
@@ -119,11 +121,15 @@ export class Engine {
               reply = `图片模型：openai:${request.model}\n质量：${request.quality}；尺寸：${request.size}；complexity：${request.complexity}`;
               result = `生图 openai:${request.model}；quality ${request.quality}；${request.size}`;
             } else {
-            const turns = [...(state.settings.history[state.settings.persona] ?? []), { role: 'user' as const, content: job.input.text }];
-            const generated = await (this.options.generate ?? generate)(state.settings.model, personaPrompt(state.settings.persona), turns);
+            const prompt = personaPrompt(state.settings.persona);
+            const compacted = await compactIfNeeded(state.settings, prompt, job.input.text, this.options.summarize);
+            // Commit the successful summary before chatting. A crash never replays a possibly paid compaction.
+            if (compacted.compacted) state = await this.underLease(key, token, s => { s.settings = compacted.settings; });
+            const turns = [...memoryTurns(state.settings), { role: 'user' as const, content: job.input.text }];
+            const generated = await (this.options.generate ?? generate)(state.settings.model, prompt, turns);
             reply = generated.text;
             next = structuredClone(state.settings);
-            next.history[next.persona] = [...turns, { role: 'assistant' as const, content: reply }].slice(-24);
+            next.history[next.persona] = [...(next.history[next.persona] ?? []), { role: 'user' as const, content: job.input.text }, { role: 'assistant' as const, content: reply }];
             result = `${state.settings.model.key} ${state.settings.model.effort}；API返回 ${generated.actualModel}；tokens ${generated.inputTokens}/${generated.outputTokens}`;
             }
           } catch (error) {

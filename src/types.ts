@@ -13,7 +13,11 @@ export interface Incoming {
 }
 export interface Selection { key: string; effort: string }
 export interface Turn { role: 'user' | 'assistant'; content: string }
-export interface Settings { model: Selection; persona: string; history: Record<string, Turn[]> }
+export interface Settings {
+  model: Selection; persona: string; history: Record<string, Turn[]>;
+  /** Optional for backwards compatibility with sessions created before compaction. */
+  memories?: Record<string, { summary: string; compactions: number }>;
+}
 export interface Job {
   input: Incoming;
   stage: 'pending' | 'generating' | 'prepared' | 'sending' | 'done';

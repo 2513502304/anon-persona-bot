@@ -2,27 +2,33 @@ import { ProviderFailure } from './models.ts';
 
 export const IMAGE_MODELS = ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'] as const;
 export interface ImageRequest { model: string; prompt: string; quality: string; size: string; complexity: string }
+export const IMAGE_LIST = `【图片模型】
+openai:gpt-image-2.6-flare（默认）
+openai:gpt-image-2.6-sunburst
+
+两者均支持：quality low / medium / high；size 1024x1024 / 1536x1024 / 1024x1536；complexity low / medium / high。
+默认 medium 质量、1024x1024、medium complexity。
+/image --model 模型ID 描述：选择模型；例：/image --model gpt-image-2.6-sunburst 水彩猫`;
 export const IMAGE_HELP = `【图片生成】
-/image 描述：生成一张图片，占 1 次个人额度；不会改变聊天模型。
-默认：openai:gpt-image-2.6-flare，medium 质量，1024x1024，medium complexity。
+/image 描述：生成一张图片，占 1 次个人额度；例：/image 戴蓝色围巾的水彩小猫
+/image --ls：列出可用图片模型与参数。
+/image --model 模型ID 描述：指定模型；例：/image --model gpt-image-2.6-sunburst 海边落日
+/image --quality 质量 描述：low / medium / high；例：/image --quality high 海边落日
+/image --size 尺寸 描述：1024x1024 / 1536x1024 / 1024x1536；例：/image --size 1536x1024 海边落日
+/image --complexity 强度 描述：low / medium / high；例：/image --complexity high 海边落日
 
-例：/image 一只戴蓝色围巾的小猫，水彩画
-例：/image --model gpt-image-2.6-sunburst --quality high --size 1536x1024 海边的落日
-
-/image --ls：查看模型与选项。
---model：gpt-image-2.6-flare / gpt-image-2.6-sunburst
---quality：low / medium / high
---size：1024x1024 / 1536x1024 / 1024x1536
---complexity：low / medium / high（生图规划计算量，不是文字模型 effort）
-所有选项放在描述前；描述以 -- 开头时，先用单独的 -- 分隔。
-返回 JPEG 图片并标注实际请求模型。失败不换模型、不自动重复扣费；超时也计 1 次。
+默认 openai:gpt-image-2.6-flare，medium 质量，1024x1024，medium complexity。
+complexity 是生图规划计算量，与文字模型 effort 独立。选项可组合，均放在描述前。
+描述以 -- 开头时先用 -- 分隔；例：/image -- --help 主题海报
+返回 JPEG 图片并标注请求模型；不改变聊天模型。失败不换模型、不自动重试；超时也计 1 次。
 此入口为文字生成图片，暂不支持上传图片编辑。`;
 
 /** Parse every option before reserving quota; reject unknown models instead of falling back. */
 export function imageCommand(text: string): { reply?: string; request?: ImageRequest } | null {
   if (!/^\/image(?:\s|$)/.test(text)) return null;
   let rest = text.slice(6).trim();
-  if (!rest || rest === '--help' || rest === '--ls') return { reply: IMAGE_HELP };
+  if (rest === '--ls') return { reply: IMAGE_LIST };
+  if (!rest || rest === '--help') return { reply: IMAGE_HELP };
   const request: ImageRequest = { model: IMAGE_MODELS[0], prompt: '', quality: 'medium', size: '1024x1024', complexity: 'medium' };
   const used = new Set<string>();
   while (rest.startsWith('--')) {

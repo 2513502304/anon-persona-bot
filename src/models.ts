@@ -32,7 +32,8 @@ export class ProviderFailure extends Error {
 
 /** Direct provider credentials, no Gateway, fallback, tools or automatic paid retries. */
 export async function generate(selection: Selection, prompt: string, turns: Turn[],
-  fetcher: typeof fetch = fetch): Promise<ModelResult> {
+  fetcher: typeof fetch = fetch,
+  options: { maxCharacters?: number; timeoutMs?: number } = {}): Promise<ModelResult> {
   const model = modelFor(selection);
   const key = process.env[model.provider === 'openai' ? 'OPENAI_API_KEY' : 'DEEPSEEK_API_KEY'];
   if (!key) throw new ProviderFailure(model.provider, 0, 'missing_key');
@@ -49,7 +50,7 @@ export async function generate(selection: Selection, prompt: string, turns: Turn
   try {
     response = await fetcher(openai ? 'https://api.openai.com/v1/responses' : 'https://api.deepseek.com/chat/completions', {
       method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(85_000),
+      body: JSON.stringify(body), signal: AbortSignal.timeout(options.timeoutMs ?? 85_000),
     });
   } catch { throw new ProviderFailure(model.provider, 0, 'network_or_timeout'); }
   const data = await response.json() as Record<string, any>;
@@ -65,7 +66,7 @@ export async function generate(selection: Selection, prompt: string, turns: Turn
     output = data.choices?.[0]?.message?.content ?? '';
   }
   if (!output.trim()) throw new ProviderFailure(model.provider, 200, 'empty_response');
-  return { text: output.trim().slice(0,1500), actualModel: data.model ?? model.id,
+  return { text: output.trim().slice(0, options.maxCharacters ?? 1500), actualModel: data.model ?? model.id,
     inputTokens: data.usage?.input_tokens ?? data.usage?.prompt_tokens ?? 0,
     outputTokens: data.usage?.output_tokens ?? data.usage?.completion_tokens ?? 0 };
 }

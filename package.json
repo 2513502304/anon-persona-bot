@@ -19,7 +19,8 @@
     "@vercel/blob": "^2.8.2",
     "@vercel/functions": "^3.11.0",
     "@vercel/oidc": "^4.0.7",
-    "chat": "^4.44.0"
+    "chat": "^4.44.0",
+    "js-tiktoken": "^1.0.21"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
