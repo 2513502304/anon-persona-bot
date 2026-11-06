@@ -83,3 +83,13 @@ test('private replies dispatch through Chat SDK with a separate session lock', a
   });
   assert.equal(sends, 1);
 });
+
+test('private ingress accepts opaque Tencent message IDs and standard author ID fallback', () => {
+  const payload = { op: 0, t: 'C2C_MESSAGE_CREATE', d: {
+    id: 'c2c:message|' + 'x'.repeat(300), author: { id: 'opaque:user', user_openid: '' },
+    content: '/usage', timestamp: new Date(now).toISOString(),
+  } };
+  assert.equal(parseEvent(payload)?.user, 'opaque:user');
+  assert.equal(parseEvent(payload)?.text, '/usage');
+  assert.equal(parseEvent({ ...payload, d: { ...payload.d, id: 'bad\nmessage' } }), null);
+});
