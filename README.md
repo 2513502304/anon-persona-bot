@@ -111,6 +111,21 @@ QQ 官方机器人提供 OpenID，而非数字 QQ 号。同一应用收到的相
 
 ## 结构与恢复
 
+### 可选 Cloudflare Webhook 入口
+
+`cloudflare/qq-entry` 是无密钥的固定上游转发器：QQ → Worker → Vercel `/api/qq`。
+它只接受该路径的 POST，限制请求体大小，原样转发签名字节与签名头；签名验证、持久入队和模型调用仍由 Vercel 完成。
+上游错误不会被转换为成功 ACK，也不会主动重试；不提供通用代理或管理接口。
+
+Cloudflare Workers Builds 连接本仓库时，生产分支选 `main`，根目录填 `cloudflare/qq-entry`，
+项目名填 `anon-qq-entry`，构建命令留空，部署命令为 `npm run deploy`；关闭预览自动部署。
+入口地址为 `https://<worker>.<account>.workers.dev/api/qq`，健康检查路径为 `/health`。
+不需要复制 OpenAI、DeepSeek、QQ Secret 或 Vercel 凭据到 Worker。
+
+必须先在 QQ 控制台验证实际 Worker 域名，再测试群聊和私聊；不能由临时 Tunnel 成功推断 `workers.dev` 可达。
+这不是完整的 Cloudflare 迁移，原有 Vercel 持久化和任务恢复仍需保留。
+停用 Daemon 前需另行配置 Webhook 任务恢复扫描，不能仅因回调验证通过就直接删除 Gateway。
+
 | 路径 | 职责 |
 | --- | --- |
 | `daemon/main.ts` | 官方 QQ WebSocket、心跳/重连、滚动部署租约与恢复扫描 |
