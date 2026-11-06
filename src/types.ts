@@ -20,6 +20,7 @@ export interface Job {
   reply?: string;
   next?: Settings;
   result?: string;
+  media?: { fileInfo: string; expiresAt: number };
 }
 /** State, inbox and lease share one CAS object, so accepting a message is atomic. */
 export interface Session {

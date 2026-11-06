@@ -1,18 +1,125 @@
 # ANON Persona Bot
 
-QQ 角色聊天机器人，部署在 Vercel Daemons，使用官方 QQ WebSocket 接入、私有 Vercel Blob 持久化和 Chat SDK 自定义适配器。
+运行在 Vercel 上的 QQ 人格聊天机器人。使用 QQ 官方 WebSocket Gateway 接收消息，用 OpenAI 或 DeepSeek API 回复；模型、推理强度和人格由用户明确选择。
 
-支持 OpenAI / DeepSeek 精确模型选择，千早爱音、芙宁娜和喜多郁代人格；仅用于非官方角色扮演。
+当前实现一个已绑定 QQ 群及 C2C 私聊路由。私聊是否收到事件、跨场景身份字段是否可用，取决于 QQ 应用权限，部署后需要实测。Telegram、Discord、微信尚未接入。
 
-## 开发
+## 功能
 
-```sh
-npm ci
-npm run check
-npm test
-npm run build:daemon
+- 人格：千早爱音、芙宁娜、喜多郁代。属于非官方角色扮演，不代表原作官方。
+- 精确模型和 effort 选择；失败不会静默切换模型或提供方。
+- 每个会话、每个人格分别保存最近 12 轮文字对话。
+- `/image` 文字生图，明确指定图片模型、质量、尺寸和 complexity。
+- 按个人计算每日次数，群聊与已关联的私聊共用额度。
+- 群内命令回复在 QQ 自动 @请求人后换行；帮助按用途分组。
+- 私有 Blob 保存状态，无需本地持久磁盘。
+
+不执行终端、网页操作或文件任务；暂不支持图片理解、上传图片编辑、语音或自然语言自动调用生图工具。
+
+## 使用
+
+群里先真正 @机器人，再输入命令；私聊直接发送。
+
+```text
+/help
+/model --ls
+/model openai:gpt-6.1-sol high
+/model openai:gpt-6.1-terra high
+/model deepseek:deepseek-flash high
+/persona --ls
+/persona 芙宁娜
+/status
+/reset --confirm
+/usage
 ```
 
-运行环境 Node.js 24。凭证仅通过环境变量配置，不要提交 `.env` 或 `.vercel/`。
+`/model` 和 `/persona` 的选择只影响当前会话，不改变其他人的选择。群聊与私聊的对话记忆分开。
 
-部署与使用文档将在后续功能提交中完善。
+```text
+/image 一只戴蓝色围巾的小猫，水彩画
+/image --model gpt-image-2.6-sunburst --quality high --size 1536x1024 海边的落日
+/image --help
+```
+
+图片默认 `openai:gpt-image-2.6-flare`、medium 质量、1024x1024、medium complexity。图片作为 JPEG 字节上传 QQ，避免 QQ 需要访问外部图片网址。文本模型的 effort 与生图 complexity 是两个独立参数。
+
+模型可用性和额度由对应 API 账号决定；模型清单位于 `src/models.ts` 与 `src/images.ts`。ChatGPT/Codex 客户端里的显示名称不应直接当成其他 API 的模型 ID。
+
+## 个人额度与身份
+
+| 身份 | 每日默认次数 |
+| --- | ---: |
+| 普通成员 | 10 |
+| 管理员 | 100 |
+| 绑定群的机器人所有者 | 无限 |
+
+北京时间每天 00:00 重置。一次文字模型请求或一次生图请求计一次；帮助和设置命令免费。失败、超时请求也计次，因为上游可能已经处理并收费。
+
+绑定群的所有者可在群内设置成员的每日总上限：
+
+```text
+/usage-limit 100 @成员
+/usage-limit --reset @成员
+```
+
+必须使用 QQ 的真实 @；手打昵称或数字 QQ 号不能作为授权依据。支持 0–10000；修改上限不清空当天用量。管理员身份从 QQ 签名事件/已认证 Gateway 事件读取，私聊沿用最近 24 小时确认过的群内身份；过期后需在群内发消息刷新。首次 `/bind` 的账号是部署所有者，请只由预期所有者完成。
+
+QQ 官方机器人提供 OpenID，而非数字 QQ 号。若群聊和私聊带有相同的 `union_openid`，自动关联个人额度。没有统一标识时提供 `/link --help` 的显式验证备用流程；不能用昵称、消息文字自称身份或时间接近来合并账号。未关联群成员的私聊可以使用帮助命令，但不能额外领取一份模型额度。
+
+## 部署
+
+需要 Node.js 24、QQ 开放平台机器人应用、OpenAI/DeepSeek API Key，以及可使用 Daemons 和私有 Blob 的 Vercel 项目。
+
+1. 安装并验证：
+
+   ```sh
+   npm ci
+   npm run check
+   npm test
+   npm run build:daemon
+   ```
+
+2. 在 Vercel 创建项目，Framework 选 Other，Build Command 为 `npm run build`，Output Directory 为 `public`。连接一个 **private Blob** store。推荐用项目 OIDC 授权；Daemon 会重新读取轮换的 OIDC 文件。
+3. 在 Vercel 的 **Production** 环境配置 `.env.example` 中的变量。API Key 和 QQ Secret 设为敏感变量；`QQ_PAIRING_CODE`、`CRON_SECRET` 各使用独立的高熵随机值。初始设置 `BOT_ENABLED=false`。
+4. 为 QQ 应用开通相应的群聊、C2C 权限并添加测试群/用户。程序订阅 `GROUP_AND_C2C` intent，通过出站 WebSocket 连接；此部署方式不依赖 QQ 请求 Vercel Webhook 域名。
+5. 使用 Vercel CLI 关联项目并部署：
+
+   ```sh
+   npx vercel link
+   npx vercel deploy --prod
+   ```
+
+6. 所有者在目标群真正 @机器人并发送 `/bind 配对码`。之后发 `/ping`、`/help`，确认收到回复。配对码不会保存在对话记忆里。
+7. 将 `BOT_ENABLED=true` 后重新部署，测试文字聊天、`/image` 和私聊 `/usage`。私聊需单独验证，不应仅凭群聊成功认定私聊可用。
+
+保留绑定和会话的 Blob store，不要在升级时替换为空 store。不要将生产凭据或生产 Blob 连接复制到不受信任的 PR/预览环境。
+
+`vercel.json` 配置一个 1 GiB QQ Gateway Daemon 和辅助 Functions。Daemon 是持续计费资源，会消耗 Vercel 平台额度；额度并不保证零账单。公开仓库不包含账号配置、密钥、聊天内容或部署诊断记录。
+
+## 结构与恢复
+
+| 路径 | 职责 |
+| --- | --- |
+| `daemon/main.ts` | 官方 QQ WebSocket、心跳/重连、滚动部署租约与恢复扫描 |
+| `src/qq.ts` | 事件归一化、QQ 文本/图片投递与签名校验 |
+| `src/chat.ts` | Chat SDK 的 QQ 适配层；持久化由 Engine 负责 |
+| `src/engine.ts` | 持久 inbox/outbox、会话串行化、模型调用与投递阶段 |
+| `src/accounts.ts` | 个人身份、权限、每日额度与原子预留 |
+| `src/store.ts` | 私有 Blob 的强 ETag 条件写入 |
+| `src/models.ts`, `src/images.ts` | 明确的提供方请求；不自动回退 |
+| `api/admin.ts` | Bearer `CRON_SECRET` 保护的运维检查 |
+
+Gateway 租约防止滚动部署时两个进程同时消费；会话锁按群/私聊和用户分开。状态按 `pending → generating → prepared → sending` 推进。若重启时付费请求或 QQ 投递结果不确定，不自动重复执行，避免二次扣费或重复消息；用户可主动重新请求。
+
+图片生成最多等待 160 秒，再上传和回复。生成期间部署重启、QQ 被动回复窗口过期或媒体引用过期可能导致图片未送达；不会为此自动再生成。适合小群使用，不承诺高吞吐或持久任务队列语义。
+
+Blob 读取使用 `Accept-Encoding: identity` 保留强 ETag；不能把弱 ETag 去掉 `W/` 后当成强校验器。所有状态都从私有源读取，避免缓存导致覆盖。
+
+## 参考
+
+- [QQ 群聊事件](https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/group_at_message_create.html)
+- [QQ 私聊事件](https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/c2c_message_create.html)
+- [OpenAI 图片生成 API](https://developers.openai.com/api/reference/resources/images/methods/generate)
+- [Vercel Daemons](https://vercel.com/docs/daemons)
+
+仓库公开不等于授予开源许可；当前 `package.json` 标记为 `UNLICENSED`。

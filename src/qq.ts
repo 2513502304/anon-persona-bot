@@ -79,3 +79,33 @@ export async function replyQQ(input: Incoming, text: string): Promise<string> {
   if (!response.ok || data.code) throw new QQFailure(response.status, String(data.code ?? 'send_error'));
   return data.id ?? input.id;
 }
+
+/** Direct byte upload avoids asking Tencent to fetch a potentially unreachable Vercel URL. */
+export async function uploadQQImage(input: Incoming, bytes: Buffer): Promise<{ fileInfo: string; expiresAt: number }> {
+  const token = await qqToken();
+  const scope = input.scope === 'private' ? 'users' : 'groups';
+  const target = input.scope === 'private' ? input.user : input.group;
+  const response = await fetch(`https://api.sgroup.qq.com/v2/${scope}/${encodeURIComponent(target)}/files`, {
+    method: 'POST', headers: { Authorization: `QQBot ${token}`, 'Content-Type': 'application/json', 'X-Union-Appid': process.env.QQ_APP_ID_ANON! },
+    body: JSON.stringify({ file_type: 1, file_name: 'anon-image.jpg', file_data: bytes.toString('base64'), srv_send_msg: false }),
+    signal: AbortSignal.timeout(25_000),
+  });
+  const data = await response.json() as { file_info?: string; ttl?: number; code?: number };
+  if (!response.ok || data.code || !data.file_info) throw new QQFailure(response.status, String(data.code ?? 'image_upload_failed'));
+  return { fileInfo: data.file_info, expiresAt: Date.now() + (data.ttl === 0 ? 86400 : Math.max(0, (data.ttl ?? 300) - 10)) * 1000 };
+}
+
+/** Persist the sending stage before this POST, just as with text replies. */
+export async function replyQQImage(input: Incoming, text: string, fileInfo: string): Promise<string> {
+  const token = await qqToken();
+  const scope = input.scope === 'private' ? 'users' : 'groups';
+  const target = input.scope === 'private' ? input.user : input.group;
+  const response = await fetch(`https://api.sgroup.qq.com/v2/${scope}/${encodeURIComponent(target)}/messages`, {
+    method: 'POST', headers: { Authorization: `QQBot ${token}`, 'Content-Type': 'application/json', 'X-Union-Appid': process.env.QQ_APP_ID_ANON! },
+    body: JSON.stringify({ content: replyContent(input, text), msg_type: 7, media: { file_info: fileInfo }, msg_id: input.id, msg_seq: 1 }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const data = await response.json() as { id?: string; code?: number };
+  if (!response.ok || data.code || !data.id) throw new QQFailure(response.status, String(data.code ?? 'image_send_failed'));
+  return data.id;
+}

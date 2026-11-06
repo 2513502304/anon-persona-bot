@@ -6,6 +6,8 @@ import { personaPrompt } from './personas.ts';
 import { secretEquals, QQFailure } from './qq.ts';
 import type { Binding, Incoming, Job, Session, Settings } from './types.ts';
 import { AccountsService } from './accounts.ts';
+import { imageCommand, generateImage } from './images.ts';
+import { uploadQQImage, replyQQImage } from './qq.ts';
 
 const LEASE_MS = 240_000;
 export function sessionKey(input: Incoming): string {
@@ -19,6 +21,9 @@ export interface EngineOptions {
   generate?: typeof generate;
   deliver: (input: Incoming, text: string) => Promise<string>;
   now?: () => number;
+  generateImage?: typeof generateImage;
+  uploadImage?: typeof uploadQQImage;
+  deliverImage?: typeof replyQQImage;
 }
 
 /** Durable inbox owns correctness; SDK-local routing state is never used as persistence. */
@@ -88,10 +93,13 @@ export class Engine {
         const binding = (await this.store.read<Binding>('config/binding.json'))?.value;
         if (!binding) throw new Error('Missing group binding');
         const accountReply = await this.accounts.command(job.input, binding);
+        const image = imageCommand(job.input.text);
         const parsed = accountReply !== null ? { reply: accountReply, next: state.settings }
+          : image ? image.reply ? { reply: image.reply, next: state.settings } : null
           : command(job.input.text, state.settings, state.lastResult, job.input.scope === 'private');
         let reply: string;
         let next: Settings | undefined;
+        let media: Job['media'];
         let result = '命令已处理';
         if (parsed) { reply = parsed.reply; next = parsed.next; }
         else if (!this.options.enabled) { reply = '机器人正在完成部署验收，暂未启用模型调用。/help 和 /ping 可用。'; }
@@ -104,27 +112,40 @@ export class Engine {
         else {
           await this.underLease(key, token, s => { s.jobs[0]!.stage = 'generating'; });
           try {
+            if (image?.request) {
+              const request = image.request;
+              const bytes = await (this.options.generateImage ?? generateImage)(request);
+              media = await (this.options.uploadImage ?? uploadQQImage)(job.input, bytes);
+              reply = `图片模型：openai:${request.model}\n质量：${request.quality}；尺寸：${request.size}；complexity：${request.complexity}`;
+              result = `生图 openai:${request.model}；quality ${request.quality}；${request.size}`;
+            } else {
             const turns = [...(state.settings.history[state.settings.persona] ?? []), { role: 'user' as const, content: job.input.text }];
             const generated = await (this.options.generate ?? generate)(state.settings.model, personaPrompt(state.settings.persona), turns);
             reply = generated.text;
             next = structuredClone(state.settings);
             next.history[next.persona] = [...turns, { role: 'assistant' as const, content: reply }].slice(-24);
             result = `${state.settings.model.key} ${state.settings.model.effort}；API返回 ${generated.actualModel}；tokens ${generated.inputTokens}/${generated.outputTokens}`;
+            }
           } catch (error) {
-            result = error instanceof ProviderFailure ? error.message : '模型请求失败';
-            reply = `${state.settings.model.key} ${state.settings.model.effort} 调用失败（${result}）。没有自动切换模型。可使用 /model --ls 查看其他选择。`;
+            result = error instanceof ProviderFailure || error instanceof QQFailure ? error.message : '模型请求或图片上传失败';
+            reply = image?.request ? `openai:${image.request.model} 生图或传图失败（${result}）。未自动重试，未切换模型。本次计 1 次额度；网络超时不代表模型没有产生费用。`
+              : `${state.settings.model.key} ${state.settings.model.effort} 调用失败（${result}）。没有自动切换模型。可使用 /model --ls 查看其他选择。`;
           }
         }
         state = await this.underLease(key, token, s => {
-          Object.assign(s.jobs[0]!, { reply, next, result, stage: 'prepared' });
+          Object.assign(s.jobs[0]!, { reply, next, media, result, stage: 'prepared' });
         });
       }
       const prepared = state.jobs[0]!;
       if (prepared.stage !== 'prepared' || !prepared.reply) throw new Error('Invalid outbox state');
+      if (prepared.media && prepared.media.expiresAt <= this.now()) {
+        await this.finish(key, token, 'QQ 图片引用已过期，未自动重新生图或发送'); return;
+      }
       await this.underLease(key, token, s => { s.jobs[0]!.stage = 'sending'; });
       // Persist before posting: after an ambiguous network failure we never resend automatically.
       try {
-        await this.options.deliver(prepared.input, prepared.reply);
+        if (prepared.media) await (this.options.deliverImage ?? replyQQImage)(prepared.input, prepared.reply, prepared.media.fileInfo);
+        else await this.options.deliver(prepared.input, prepared.reply);
       } catch (error) {
         const safe = error instanceof QQFailure ? error.message : 'QQ 投递失败或结果不确定';
         console.error(JSON.stringify({ event: 'delivery_failed', status: safe }));
