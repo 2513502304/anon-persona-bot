@@ -48,9 +48,15 @@ export function command(text: string, current: Settings, lastResult?: string, pr
 /link：私聊获取绑定码；按提示在群里验证，再回私聊确认。
 身份关联后共享额度，群聊与私聊的记忆仍然分开。
 
+【图片生成】
+/image 描述：生成一张图片，占 1 次额度。
+例：/image 一只戴蓝色围巾的小猫，水彩画
+/image --help：查看精确生图模型、质量、尺寸与 complexity。
+默认 gpt-image-2.6-flare；失败不自动换模型。
+
 各命令均支持 --help。
 ${scope}
-目前支持文字聊天，尚未接入生图、识图和语音。`;
+目前支持文字聊天与 /image 生图；尚未接入识图、图像编辑和语音。`;
   if (name === '/help') return done(args.length && args[0] !== '--help' ? '用法：/help' : help);
   if (name === '/ping') return done(args[0] === '--help' ? '用法：/ping\n检查 QQ 收发链路；不调用模型、不消耗个人额度。' : args.length ? '用法：/ping' : '在线。QQ 收发链路正常。');
   if (name === '/model') {
@@ -73,7 +79,7 @@ ${scope}
   }
   if (name === '/status') {
     if (args.length) return done('用法：/status。查看人格、精确模型、推理强度和近期处理状态。');
-    return done(`人格：${PERSONAS[next.persona]!.name}\n${modelDescription(next.model)}\n${scope}\n当前人格记忆：${Math.floor((next.history[next.persona]?.length ?? 0)/2)}/12 轮\n最近处理：${lastResult ?? '无'}\n仅角色扮演，无工具执行能力。`);
+    return done(`人格：${PERSONAS[next.persona]!.name}\n${modelDescription(next.model)}\n${scope}\n当前人格记忆：${Math.floor((next.history[next.persona]?.length ?? 0)/2)}/12 轮\n最近处理：${lastResult ?? '无'}\n支持 /image 生图；不执行网页、文件或终端任务。\n/usage 查看共享个人额度。`);
   }
   if (name === '/reset') {
     if (args.length !== 1 || args[0] !== '--confirm') return done('用法：/reset --confirm\n仅清除你在当前会话、当前人格的最近聊天记忆；保留模型与人格设置，不重置每日额度。');
