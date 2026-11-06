@@ -82,7 +82,7 @@ export async function mutate<T, R>(store: Store, key: string, initial: () => T,
 /** Test backend preserves CAS semantics, including separate read/write interleavings. */
 export class MemoryStore implements Store {
   private values = new Map<string, Snapshot<unknown>>();
-  /** Read the private origin and its strong ETag as one versioned snapshot. */
+  /** Return a detached snapshot so tests cannot mutate persisted state outside CAS. */
   async read<T>(key: string): Promise<Snapshot<T> | null> {
     return structuredClone(this.values.get(key) as Snapshot<T> | undefined) ?? null;
   }

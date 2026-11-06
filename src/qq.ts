@@ -5,8 +5,7 @@ import type { Incoming } from './types.ts';
 export class QQFailure extends Error {
   constructor(public readonly status: number, public readonly code: string) { super(`QQ HTTP ${status} ${code}`); }
 }
-/** Constant-time comparison also handles unequal-length inputs without exceptions. */
-/** Compare equally sized credential digests without leaking a differing prefix. */
+/** Hash inputs to equal-length digests before constant-time comparison; empty credentials deny access. */
 export function secretEquals(a: string, b: string): boolean {
   return Boolean(a && b) && timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
 }
