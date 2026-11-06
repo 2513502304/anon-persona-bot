@@ -11,6 +11,8 @@ import { uploadQQImage, replyQQImage } from './qq.ts';
 import { compactIfNeeded, memoryTurns, summarize } from './memory.ts';
 
 const LEASE_MS = 240_000;
+class CompactionFailure extends Error {}
+class QuotaChanged extends Error {}
 /** Hash opaque platform identifiers and isolate read-only reference traffic from chat locks. */
 export function sessionKey(input: Incoming): string {
   const scope = input.scope === 'private' ? `${input.platform}:private:${input.user}` : `${input.platform}:${input.group}:${input.user}`;
@@ -109,10 +111,12 @@ export class Engine {
         let next: Settings | undefined;
         let media: Job['media'];
         let result = '命令已处理';
+        // Check eligibility before spending on compaction, then reserve atomically only before the chat/image call.
+        const allowance = !parsed && this.options.enabled ? await this.accounts.inspect(job.input, binding) : null;
         if (parsed) { reply = parsed.reply; next = parsed.next; }
         else if (!this.options.enabled) { reply = '机器人正在完成部署验收，暂未启用模型调用。/help 和 /ping 可用。'; }
-        else if (!(await this.accounts.reserve(job.input, binding))) {
-          const usage = await this.accounts.inspect(job.input, binding);
+        else if (allowance && (!allowance.member || (allowance.limit !== null && allowance.used >= allowance.limit))) {
+          const usage = allowance;
           reply = usage.member ? `今日个人额度已用完（${usage.used}/${usage.limit}）。北京时间 00:00 重置；群聊和私聊共享额度。\n/usage 查看详情，或请群主调整额度。`
             : '请先在已绑定群里 @ANON 发 /usage，之后可直接私聊。系统自动按你的 QQ 身份共享每日额度，无需绑定码。';
           result = usage.member ? '个人额度不足，未调用模型' : '私聊未关联，未调用模型';
@@ -121,6 +125,7 @@ export class Engine {
           await this.underLease(key, token, s => { s.jobs[0]!.stage = 'generating'; });
           try {
             if (image?.request) {
+              if (!(await this.accounts.reserve(job.input, binding))) throw new QuotaChanged();
               const request = image.request;
               const bytes = await (this.options.generateImage ?? generateImage)(request);
               media = await (this.options.uploadImage ?? uploadQQImage)(job.input, bytes);
@@ -128,9 +133,12 @@ export class Engine {
               result = `生图 openai:${request.model}；quality ${request.quality}；${request.size}`;
             } else {
             const prompt = personaPrompt(state.settings.persona);
-            const compacted = await compactIfNeeded(state.settings, prompt, job.input.text, this.options.summarize);
+            let compacted;
+            try { compacted = await compactIfNeeded(state.settings, prompt, job.input.text, this.options.summarize); }
+            catch { throw new CompactionFailure(); }
             // Commit the successful summary before chatting. A crash never replays a possibly paid compaction.
             if (compacted.compacted) state = await this.underLease(key, token, s => { s.settings = compacted.settings; });
+            if (!(await this.accounts.reserve(job.input, binding))) throw new QuotaChanged();
             const turns = [...memoryTurns(state.settings), { role: 'user' as const, content: job.input.text }];
             const generated = await (this.options.generate ?? generate)(state.settings.model, prompt, turns);
             reply = generated.text;
@@ -139,9 +147,17 @@ export class Engine {
             result = `${state.settings.model.key} ${state.settings.model.effort}；API返回 ${generated.actualModel}；tokens ${generated.inputTokens}/${generated.outputTokens}`;
             }
           } catch (error) {
+            if (error instanceof CompactionFailure) {
+              result = '记忆压缩失败，未扣个人次数，未发起聊天请求';
+              reply = '记忆压缩失败，原对话已保留，本次不扣个人次数，也未发起聊天请求。可用 /reset --confirm 清除当前人格记忆；再次发送聊天会重新尝试压缩。压缩虽不扣个人次数，仍可能产生模型 API 费用。';
+            } else if (error instanceof QuotaChanged) {
+              result = '并发请求已用完个人额度，未发起聊天或生图请求';
+              reply = '其他会话刚刚用完了你的个人额度，本次未发起聊天或生图请求，也未新增计次。/usage 查看当前额度。';
+            } else {
             result = error instanceof ProviderFailure || error instanceof QQFailure ? error.message : '模型请求或图片上传失败';
             reply = image?.request ? `openai:${image.request.model} 生图或传图失败（${result}）。未自动重试，未切换模型。本次计 1 次额度；网络超时不代表模型没有产生费用。`
               : `${state.settings.model.key} ${state.settings.model.effort} 调用失败（${result}）。没有自动切换模型。可使用 /model --ls 查看其他选择。`;
+            }
           }
         }
         state = await this.underLease(key, token, s => {

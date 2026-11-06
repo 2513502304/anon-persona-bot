@@ -64,3 +64,43 @@ test('image listing is free and examples stay on the command line', () => {
   assert.doesNotMatch(command('/help', initialSettings())!.reply, /\n例：/);
   assert.doesNotMatch(imageCommand('/image --help')!.reply!, /\n例：/);
 });
+
+test('failed compaction preserves history and spends no personal quota or chat request', async () => {
+  const store = new MemoryStore(); const now = Date.now(); const binding = { group: 'g', owner: 'owner', pairedAt: now };
+  await store.write('config/binding.json', binding, null);
+  const input: Incoming = { id: 'failed-compact', platform: 'qq', group: 'g', user: 'member', text: 'next', timestamp: now };
+  const settings = fullSettings(); const key = sessionKey(input);
+  await store.write<Session>(key, { settings, jobs: [], completed: [], updatedAt: now }, null);
+  let chatCalls = 0; let compactCalls = 0; let reply = '';
+  const engine = new Engine(store, { pairingCode: '', enabled: true,
+    deliver: async (_i, text) => { reply = text; return 'ok'; },
+    summarize: async () => { compactCalls++; throw new Error('timeout'); },
+    generate: async () => { chatCalls++; throw new Error('must not chat'); },
+  });
+  await engine.accept(input); await engine.run(key); await engine.accept(input); await engine.run(key);
+  assert.equal(compactCalls, 1); assert.equal(chatCalls, 0);
+  assert.equal((await new AccountsService(store).inspect(input, binding)).used, 0);
+  assert.deepEqual((await store.read<Session>(key))!.value.settings, settings);
+  assert.match(reply, /压缩失败/); assert.match(reply, /不扣个人次数/); assert.match(reply, /\/reset --confirm/);
+});
+
+test('compaction checks eligibility first and rechecks quota atomically before chatting', async () => {
+  const store = new MemoryStore(); const now = Date.now(); const binding = { group: 'g', owner: 'owner', pairedAt: now };
+  await store.write('config/binding.json', binding, null);
+  const input: Incoming = { id: 'quota-race', platform: 'qq', group: 'g', user: 'member', text: 'next', timestamp: now };
+  const accounts = new AccountsService(store);
+  for (let i = 0; i < 9; i++) await accounts.reserve({ ...input, id: `earlier-${i}` }, binding);
+  const key = sessionKey(input);
+  await store.write<Session>(key, { settings: fullSettings(), jobs: [], completed: [], updatedAt: now }, null);
+  let chatCalls = 0; let compactCalls = 0; let reply = '';
+  const engine = new Engine(store, { pairingCode: '', enabled: true,
+    deliver: async (_i, text) => { reply = text; return 'ok'; },
+    summarize: async () => { compactCalls++; await accounts.reserve({ ...input, id: 'other-chat' }, binding); return 'summary'; },
+    generate: async () => { chatCalls++; throw new Error('must not chat'); },
+  });
+  await engine.accept(input); await engine.run(key);
+  assert.equal(compactCalls, 1); assert.equal(chatCalls, 0); assert.match(reply, /其他会话/);
+  assert.equal((await accounts.inspect(input, binding)).used, 10);
+  await engine.accept({ ...input, id: 'already-full' }); await engine.run(key);
+  assert.equal(compactCalls, 1); assert.equal(chatCalls, 0); assert.match(reply, /额度已用完/);
+});
