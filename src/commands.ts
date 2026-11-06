@@ -13,7 +13,7 @@ export function command(text: string, current: Settings, lastResult?: string, pr
   const help = `ANON 使用帮助
 
 【开始聊天】
-群里先 @ANON，再说话或输入命令。
+群里先 @ANON，再说话或输入命令；私聊直接发送。
 /help：查看完整帮助。
 /ping：检查机器人是否在线，不调用模型。
 
@@ -36,9 +36,21 @@ export function command(text: string, current: Settings, lastResult?: string, pr
 /status：查看人格、模型、推理强度、记忆和上次结果。
 /reset --confirm：清除当前人格的近期记忆，保留模型设置。
 
+【个人额度】
+/usage：查看个人编号、身份、今日已用与剩余额度。
+普通成员每天 10 次，管理员 100 次，群主无限次。
+北京时间 00:00 重置；群聊和已绑定私聊共享额度。
+帮助、设置等命令不扣次数；模型请求失败或超时也计一次。
+/usage-limit 100 @成员：群主设置该成员每天 100 次。
+/usage-limit --reset @成员：群主恢复其身份默认额度。
+
+【私聊绑定】
+/link：私聊获取绑定码；按提示在群里验证，再回私聊确认。
+身份关联后共享额度，群聊与私聊的记忆仍然分开。
+
 各命令均支持 --help。
 ${scope}
-目前支持文字聊天；尚未接入生图、识图和语音。`;
+目前支持文字聊天，尚未接入生图、识图和语音。`;
   if (name === '/help') return done(args.length && args[0] !== '--help' ? '用法：/help' : help);
   if (name === '/ping') return done(args[0] === '--help' ? '用法：/ping\n检查 QQ 收发链路；不调用模型、不消耗个人额度。' : args.length ? '用法：/ping' : '在线。QQ 收发链路正常。');
   if (name === '/model') {
@@ -61,7 +73,7 @@ ${scope}
   }
   if (name === '/status') {
     if (args.length) return done('用法：/status。查看人格、精确模型、推理强度和近期处理状态。');
-    return done(`人格：${PERSONAS[next.persona]!.name}\n${modelDescription(next.model)}\n${scope}\n当前人格记忆：${Math.floor((next.history[next.persona]?.length ?? 0)/2)}/12 轮\n最近处理：${lastResult ?? '无'}\n当前支持文字聊天。`);
+    return done(`人格：${PERSONAS[next.persona]!.name}\n${modelDescription(next.model)}\n${scope}\n当前人格记忆：${Math.floor((next.history[next.persona]?.length ?? 0)/2)}/12 轮\n最近处理：${lastResult ?? '无'}\n仅角色扮演，无工具执行能力。`);
   }
   if (name === '/reset') {
     if (args.length !== 1 || args[0] !== '--confirm') return done('用法：/reset --confirm\n仅清除你在当前会话、当前人格的最近聊天记忆；保留模型与人格设置，不重置每日额度。');

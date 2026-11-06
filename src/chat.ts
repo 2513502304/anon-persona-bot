@@ -13,7 +13,7 @@ export function qqAdapter(input: Incoming, send: typeof replyQQ = replyQQ): Adap
     encodeThreadId: id => id, decodeThreadId: id => id,
     channelIdFromThreadId: () => `qq:${input.group}`,
     fetchMessages: async () => ({ messages: [] }),
-    fetchThread: async () => ({ id: threadId, channelId: `qq:${input.group}`, metadata: {}, isDM: false }),
+    fetchThread: async () => ({ id: threadId, channelId: `qq:${input.group}`, metadata: {}, isDM: input.scope === 'private' }),
     parseMessage: raw => new Message({ id: raw.id, threadId, text: raw.text, formatted: parseMarkdown(raw.text), raw,
       attachments: [], author: { userId: raw.user, userName: raw.user, fullName: '群友', isBot: false, isMe: false },
       metadata: { dateSent: new Date(raw.timestamp), edited: false }, isMention: true }),

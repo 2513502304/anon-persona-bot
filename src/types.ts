@@ -6,6 +6,10 @@ export interface Incoming {
   user: string;
   text: string;
   timestamp: number;
+  scope?: 'group' | 'private';
+  role?: 'member' | 'admin' | 'owner';
+  union?: string;
+  mentions?: { id: string; name?: string; union?: string }[];
 }
 export interface Selection { key: string; effort: string }
 export interface Turn { role: 'user' | 'assistant'; content: string }
