@@ -141,3 +141,27 @@ test('text provider preserves HTTP status for non-JSON and null response bodies'
     }
   } finally { if (old === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = old; }
 });
+
+test('reference commands remain durable but bypass account writes and busy chat locks', async () => {
+  class CountingStore extends MemoryStore {
+    writes: string[] = [];
+    override async write<T>(key: string, value: T, etag: string | null) { this.writes.push(key); return super.write(key, value, etag); }
+  }
+  const store = new CountingStore();
+  await store.write('config/binding.json', { group: 'group_a', owner: 'user_a', pairedAt: Date.now() }, null);
+  let start!: () => void; let release!: () => void;
+  const started = new Promise<void>(r => { start = r; }); const blocked = new Promise<void>(r => { release = r; }); const sent: string[] = [];
+  const engine = new Engine(store, { pairingCode: '', enabled: true,
+    generate: async () => { start(); await blocked; return { text: 'chat', actualModel: 'test', inputTokens: 1, outputTokens: 1 }; },
+    deliver: async (_i, text) => { sent.push(text); return 'sent'; },
+  });
+  const chat = incoming('slow-chat'); await engine.accept(chat); const running = engine.run(sessionKey(chat)); await started;
+  const before = store.writes.length; const help = incoming('help','/help');
+  try {
+    assert.notEqual(sessionKey(chat), sessionKey(help));
+    await engine.accept(help); await engine.run(sessionKey(help));
+    assert.match(sent[0]!, /ANON 使用帮助/);
+    const writes = store.writes.slice(before); assert.equal(writes.length, 4); assert.ok(writes.every(k => k === sessionKey(help)));
+    await engine.accept(help); await engine.run(sessionKey(help)); assert.equal(sent.length, 1);
+  } finally { release(); await running; }
+});

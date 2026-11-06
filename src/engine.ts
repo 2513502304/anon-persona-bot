@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mutate, type Store } from './store.ts';
-import { initialSettings, command } from './commands.ts';
+import { initialSettings, command, isReferenceCommand } from './commands.ts';
 import { generate, ProviderFailure } from './models.ts';
 import { personaPrompt } from './personas.ts';
 import { secretEquals, QQFailure } from './qq.ts';
@@ -13,7 +13,8 @@ import { compactIfNeeded, memoryTurns, summarize } from './memory.ts';
 const LEASE_MS = 240_000;
 export function sessionKey(input: Incoming): string {
   const scope = input.scope === 'private' ? `${input.platform}:private:${input.user}` : `${input.platform}:${input.group}:${input.user}`;
-  return `sessions/${createHash('sha256').update(scope).digest('hex')}.json`;
+  // Reference commands do not wait behind a model generation or load its growing history.
+  return `sessions/${createHash('sha256').update(scope + (isReferenceCommand(input.text) ? ':reference' : '')).digest('hex')}.json`;
 }
 function initialSession(): Session { return { settings: initialSettings(), jobs: [], completed: [], updatedAt: Date.now() }; }
 export interface EngineOptions {
@@ -49,12 +50,14 @@ export class Engine {
       input = { ...input, text: '/help' }; // Do not persist the pairing credential in chat history.
     }
     if (!binding || (input.scope !== 'private' && binding.group !== input.group)) return { accepted: false };
-    await this.accounts.inspect(input, binding);
+    const reference = isReferenceCommand(input.text);
+    const referenceReply = reference ? (imageCommand(input.text)?.reply ?? command(input.text, initialSettings(), undefined, input.scope === 'private')?.reply) : undefined;
+    if (!reference) await this.accounts.inspect(input, binding);
     const key = sessionKey(input);
     return mutate<Session, { accepted: boolean; key?: string; busy?: boolean }>(this.store, key, initialSession, state => {
       if (state.completed.includes(input.id) || state.jobs.some(j => j.input.id === input.id)) return { value: state, result: { accepted: true, key }, unchanged: true };
       if (state.jobs.length >= 5) return { value: state, result: { accepted: false, busy: true }, unchanged: true };
-      state.jobs.push({ input, stage: 'pending' });
+      state.jobs.push(referenceReply ? { input, stage: 'prepared', reply: referenceReply, result: '参考命令已处理' } : { input, stage: 'pending' });
       state.updatedAt = this.now();
       return { value: state, result: { accepted: true, key } };
     });
@@ -71,13 +74,13 @@ export class Engine {
   async run(key: string): Promise<void> {
     const token = randomUUID();
     const acquired = await mutate(this.store, key, initialSession, state => {
-      if (!state.jobs.length || (state.lease && state.lease.until > this.now())) return { value: state, result: false, unchanged: true };
+      if (!state.jobs.length || (state.lease && state.lease.until > this.now())) return { value: state, result: null as Session | null, unchanged: true };
       state.lease = { token, until: this.now() + LEASE_MS };
-      return { value: state, result: true };
+      return { value: state, result: state as Session | null };
     });
     if (!acquired) return;
     try {
-      let state = await this.underLease(key, token, () => {});
+      let state = acquired;
       const job = state.jobs[0]!;
       if (job.stage === 'sending') {
         await this.finish(key, token, 'QQ 投递结果不确定，未自动重复发送'); return;
@@ -160,7 +163,8 @@ export class Engine {
       await this.finish(key, token, prepared.result ?? '已回复', prepared.next);
     } finally {
       await mutate(this.store, key, initialSession, state => {
-        if (state.lease?.token === token) delete state.lease;
+        if (state.lease?.token !== token) return { value: state, result: undefined, unchanged: true };
+        delete state.lease;
         return { value: state, result: undefined };
       });
     }
@@ -171,6 +175,8 @@ export class Engine {
       if (job) state.completed = [...state.completed, job.input.id].slice(-100);
       if (next) state.settings = next;
       state.lastResult = result;
+      // Finishing and releasing ownership are one write; a new worker may now take the next job.
+      delete state.lease;
     });
   }
   async recover(): Promise<number> {

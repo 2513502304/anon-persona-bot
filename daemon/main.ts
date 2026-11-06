@@ -77,9 +77,12 @@ async function main() {
     const input = parseEvent({ op: 0, t: message.rawEventType, d: message.raw });
     if (!input) return;
     return track((async () => {
+      const started = performance.now();
       const accepted = await engine.accept(input);
-      log('gateway_message', { accepted: accepted.accepted });
+      const acceptedMs = Math.round(performance.now() - started);
+      log('gateway_message', { accepted: accepted.accepted, acceptedMs });
       if (accepted.key) await engine.run(accepted.key);
+      log('gateway_message_finished', { acceptedMs, totalMs: Math.round(performance.now() - started), command: input.text.startsWith('/') });
     })()).then(() => {});
   });
   // SDK owns heartbeat, token refresh and reconnect/RESUME in memory. Disk sessions are not used.

@@ -5,6 +5,11 @@ import { personaPrompt } from './personas.ts';
 import type { Settings } from './types.ts';
 
 export function initialSettings(): Settings { return { model: { ...DEFAULT_MODEL }, persona: 'anon', history: {} }; }
+/** Only read-only reference commands may bypass conversation/account loading. */
+export function isReferenceCommand(text: string): boolean {
+  return /^\/(?:help|ping)(?:\s+--help)?$/.test(text.trim()) ||
+    /^\/(?:model|persona|image)\s+--(?:help|ls)$/.test(text.trim());
+}
 /** Commands are parsed outside the model. Invalid options never mutate configuration. */
 export function command(text: string, current: Settings, lastResult?: string, privateChat = false): { reply: string; next: Settings } | null {
   if (!text.startsWith('/')) return null;
