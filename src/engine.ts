@@ -106,7 +106,7 @@ export class Engine {
         else if (!(await this.accounts.reserve(job.input, binding))) {
           const usage = await this.accounts.inspect(job.input, binding);
           reply = usage.member ? `今日个人额度已用完（${usage.used}/${usage.limit}）。北京时间 00:00 重置；群聊和私聊共享额度。\n/usage 查看详情，或请群主调整额度。`
-            : '请先关联你在 ANON 群中的身份，再开始私聊。发送 /link 查看绑定步骤。群聊与私聊共用每日额度。';
+            : '请先在已绑定群里 @ANON 发 /usage，之后可直接私聊。系统自动按你的 QQ 身份共享每日额度，无需绑定码。';
           result = usage.member ? '个人额度不足，未调用模型' : '私聊未关联，未调用模型';
         }
         else {
