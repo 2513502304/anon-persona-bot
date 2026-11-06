@@ -38,6 +38,10 @@ export function parseEvent(payload: unknown): Incoming | null {
   if (!text || text.length > 2000) return null;
   return { id: d.id, platform: 'qq', group: d.group_openid, user: d.author.member_openid, text, timestamp };
 }
+/** QQ adds the passive-reply mention; separate structured command output from it. */
+export function replyContent(input: Incoming, text: string): string {
+  return input.text.startsWith('/') ? '\n' + text.replace(/^\n+/, '') : text;
+}
 let cachedToken: { value: string; until: number } | undefined;
 export async function qqToken(fetcher: typeof fetch = fetch): Promise<string> {
   if (cachedToken && cachedToken.until > Date.now()) return cachedToken.value;
@@ -58,7 +62,7 @@ export async function replyQQ(input: Incoming, text: string): Promise<string> {
   try {
     response = await fetch(`https://api.sgroup.qq.com/v2/groups/${encodeURIComponent(input.group)}/messages`, {
       method: 'POST', headers: { Authorization: `QQBot ${token}`, 'Content-Type': 'application/json', 'X-Union-Appid': process.env.QQ_APP_ID_ANON! },
-      body: JSON.stringify({ content: text, msg_type: 0, msg_id: input.id, msg_seq: 1 }),
+      body: JSON.stringify({ content: replyContent(input, text), msg_type: 0, msg_id: input.id, msg_seq: 1 }),
       signal: AbortSignal.timeout(15_000),
     });
   } catch { throw new QQFailure(0, 'delivery_unknown'); }
